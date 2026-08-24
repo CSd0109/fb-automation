@@ -166,7 +166,7 @@ Respond ONLY with valid JSON.
 """
         contents = [file_ref, analysis_prompt] if file_ref else [analysis_prompt + f"\nVideo filename: {video_filename}"]
         
-        models_to_try = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-3-flash-preview']
+        models_to_try = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-3-flash-preview']
         response = None
         for m in models_to_try:
             try:
@@ -368,29 +368,48 @@ def upload_reel(video_info):
             except Exception as th_ex:
                 log(f"ℹ️ Custom cover upload tab note: {th_ex}")
 
-        # Step 1: Click "Next" / "अर्को"
-        next_selectors = [
-            'div[aria-label="Next"]', 'div[aria-label="अर्को"]',
-            'div[role="button"]:has-text("Next")', 'div[role="button"]:has-text("अर्को")',
-            'button:has-text("Next")', 'button:has-text("अर्को")'
-        ]
+        # Step 1: Advance through the wizard by clicking Next until Description/Publish step is reached
+        log("⏳ Waiting for video preview processing and advancing wizard...")
+        for attempt in range(15): # Loop up to 45 seconds
+            page.wait_for_timeout(3000)
 
-        def click_next():
-            for sel in next_selectors:
+            # Check if we already reached description step
+            desc_found = False
+            for c_sel in [
+                'div[aria-label*="Describe your reel"]',
+                'div[aria-label*="आफ्नो रिल"]',
+                'div[aria-label*="Write a description"]',
+                'div[role="textbox"]',
+                'div[contenteditable="true"]'
+            ]:
+                try:
+                    if page.locator(c_sel).first.is_visible():
+                        desc_found = True
+                        break
+                except Exception:
+                    pass
+
+            if desc_found:
+                log("✅ Reached Final Step (Description & Publish)!")
+                break
+
+            # Click Next if visible
+            for sel in [
+                'div[aria-label="Next"]', 'div[aria-label="अर्को"]',
+                'div[role="button"]:has-text("Next")', 'div[role="button"]:has-text("अर्को")',
+                'button:has-text("Next")', 'button:has-text("अर्को")',
+                'div:text-is("Next")', 'span:text-is("Next")',
+                '[aria-label*="Next"]'
+            ]:
                 try:
                     loc = page.locator(sel).first
-                    if loc.is_visible(timeout=3000):
+                    if loc.is_visible():
                         loc.click()
-                        log(f"➡️ Clicked Next ({sel})")
+                        log(f"➡️ Clicked Next button ({sel}) [Attempt {attempt+1}]")
                         page.wait_for_timeout(3000)
-                        return True
+                        break
                 except Exception:
                     continue
-            return False
-
-        click_next()
-        page.wait_for_timeout(2000)
-        click_next() # If audio/trim step exists
 
         # Step 2: Fill Caption / Description
         log("✍️ Typing AI SEO Caption & Viral Hashtags...")
@@ -432,6 +451,8 @@ def upload_reel(video_info):
             'div[aria-label="Post"]',
             'div[role="button"]:has-text("Post")',
             'button:has-text("Post")',
+            'div:text-is("Post")',
+            'span:text-is("Post")',
             'div[aria-label="Publish"]',
             'div[role="button"]:has-text("Publish")',
             'div[aria-label="प्रकाशित गर्नुहोस्"]',
@@ -440,16 +461,20 @@ def upload_reel(video_info):
         ]
 
         published = False
-        for p_sel in publish_selectors:
-            try:
-                loc = page.locator(p_sel).first
-                if loc.is_visible(timeout=4000):
-                    loc.click()
-                    log(f"🎉 Clicked Publish/Post button ({p_sel})!")
-                    published = True
-                    break
-            except Exception:
-                continue
+        for attempt in range(8):
+            for p_sel in publish_selectors:
+                try:
+                    loc = page.locator(p_sel).first
+                    if loc.is_visible(timeout=2000):
+                        loc.click()
+                        log(f"🎉 Clicked Publish/Post button ({p_sel})!")
+                        published = True
+                        break
+                except Exception:
+                    continue
+            if published:
+                break
+            page.wait_for_timeout(2000)
 
         if not published:
             try:
@@ -463,6 +488,8 @@ def upload_reel(video_info):
                     log("🎉 Clicked Publish via get_by_role!")
                 except Exception as e:
                     log(f"❌ Failed to click publish button: {e}")
+                    screenshot_fail = os.path.join(LOGS_DIR, f"fail_publish_{int(time.time())}.png")
+                    page.screenshot(path=screenshot_fail)
                     browser.close()
                     return False, f"Publish button not clickable: {e}", None
 
