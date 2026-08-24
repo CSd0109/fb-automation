@@ -49,16 +49,16 @@ jobs:
         run: |
           python uploader.py
 
-      - name: 💾 Commit & Push Upload History
+      - name: 💾 Commit & Push Upload History & Cleanup
         if: always()
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add posted_history.json logs/
+          git add -A
           if git diff --staged --quiet; then
             echo "No changes to commit."
           else
-            git commit -m "🤖 Auto-update posted history [$(date -u)]"
+            git commit -m "🤖 Auto-update posted history and clean uploaded video [$(date -u)]"
             git push origin HEAD
           fi
 

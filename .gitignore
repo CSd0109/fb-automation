@@ -1,6 +1,9 @@
 # Environment & Secrets (Never commit credentials!)
 .env
 facebook_session.json
+*.jsonl
+logs/*.png
+logs/*.jpg
 
 # Python
 __pycache__/
@@ -12,7 +15,3 @@ venv/
 # Playwright
 test-results/
 playwright-report/
-
-# Keep folders
-!videos/.gitkeep
-!logs/.gitkeep

@@ -77,12 +77,19 @@ def save_posted_history(history):
 
 def get_next_video():
     """
-    Finds the first available unposted video in videos/ folder or queue.json.
+    Finds the first available unposted video in videos/ folder, root repo directory, or queue.json.
     """
-    supported_extensions = ("*.mp4", "*.mov", "*.webm", "*.mkv")
+    supported_extensions = ("*.mp4", "*.mov", "*.webm", "*.mkv", "*.MP4", "*.MOV")
     video_files = []
+    # 1. Scan videos/ directory
     for ext in supported_extensions:
         video_files.extend(glob.glob(os.path.join(VIDEOS_DIR, ext)))
+    
+    # 2. Scan root directory (in case user uploads directly to repo root)
+    for ext in supported_extensions:
+        for f in glob.glob(os.path.join(BASE_DIR, ext)):
+            if f not in video_files:
+                video_files.append(f)
     
     video_files.sort() # FIFO order
 
@@ -383,14 +390,17 @@ def upload_reel(video_info):
 
         page.wait_for_timeout(3000)
 
-        # Step 3: Click "Publish" / "प्रकाशित गर्नुहोस्"
-        log("🚀 Clicking 'Publish' button...")
+        # Step 3: Click "Post" / "Publish"
+        log("🚀 Clicking 'Post' / 'Publish' button...")
         publish_selectors = [
-            'div[aria-label="Publish"]', 'div[aria-label="प्रकाशित गर्नुहोस्"]',
             'div[aria-label="Post"]',
-            'div[role="button"]:has-text("Publish")', 'div[role="button"]:has-text("प्रकाशित गर्नुहोस्")',
             'div[role="button"]:has-text("Post")',
-            'button:has-text("Publish")', 'button:has-text("Post")'
+            'button:has-text("Post")',
+            'div[aria-label="Publish"]',
+            'div[role="button"]:has-text("Publish")',
+            'div[aria-label="प्रकाशित गर्नुहोस्"]',
+            'div[role="button"]:has-text("प्रकाशित गर्नुहोस्")',
+            'button:has-text("Publish")'
         ]
 
         published = False
@@ -399,7 +409,7 @@ def upload_reel(video_info):
                 loc = page.locator(p_sel).first
                 if loc.is_visible(timeout=4000):
                     loc.click()
-                    log(f"🎉 Clicked Publish button ({p_sel})!")
+                    log(f"🎉 Clicked Publish/Post button ({p_sel})!")
                     published = True
                     break
             except Exception:
@@ -407,17 +417,26 @@ def upload_reel(video_info):
 
         if not published:
             try:
-                page.get_by_role("button", name="Publish").click(timeout=5000)
+                page.get_by_role("button", name="Post").click(timeout=5000)
                 published = True
-                log("🎉 Clicked Publish via get_by_role!")
-            except Exception as e:
-                log(f"❌ Failed to click publish button: {e}")
-                browser.close()
-                return False, f"Publish button not clickable: {e}", None
+                log("🎉 Clicked Post via get_by_role!")
+            except Exception:
+                try:
+                    page.get_by_role("button", name="Publish").click(timeout=5000)
+                    published = True
+                    log("🎉 Clicked Publish via get_by_role!")
+                except Exception as e:
+                    log(f"❌ Failed to click publish button: {e}")
+                    browser.close()
+                    return False, f"Publish button not clickable: {e}", None
 
-        # Wait for completion
-        log("⏳ Uploading Reel to Facebook servers (20s)...")
-        page.wait_for_timeout(20000)
+        # Wait for Reel upload and redirect confirmation
+        log("⏳ Uploading Reel to Facebook servers (30s)...")
+        for i in range(6):
+            page.wait_for_timeout(5000)
+            if "/reel/" in page.url:
+                log(f"🎉 Live Reel Published! Direct URL: {page.url}")
+                break
 
         # Screenshot success
         success_img = os.path.join(LOGS_DIR, f"success_{video_filename}_{int(time.time())}.png")
