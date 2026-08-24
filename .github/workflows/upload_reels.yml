@@ -1,0 +1,71 @@
+name: Facebook Reels 24/7 Auto Uploader
+
+on:
+  schedule:
+    # 🇳🇵 Nepal Standard Time (UTC +5:45):
+    # - 07:00 AM NPT -> 01:15 UTC
+    # - 01:00 PM NPT -> 07:15 UTC
+    # - 04:00 PM NPT -> 10:15 UTC
+    # - 07:00 PM NPT -> 13:15 UTC
+    - cron: '15 1,7,10,13 * * *'
+  workflow_dispatch: # Allows manual trigger anytime from GitHub Actions tab
+
+permissions:
+  contents: write # Allows auto-committing posted_history.json back to repo
+
+jobs:
+  upload_reel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🐍 Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 📦 Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🎭 Install Playwright Browsers & OS Dependencies
+        run: |
+          playwright install --with-deps chromium
+
+      - name: 🚀 Run Facebook Reels Auto Uploader
+        env:
+          FB_STORAGE_STATE: ${{ secrets.FB_STORAGE_STATE }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          HEADLESS: "true"
+        run: |
+          python uploader.py
+
+      - name: 💾 Commit & Push Upload History
+        if: always()
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add posted_history.json logs/
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "🤖 Auto-update posted history [$(date -u)]"
+            git push origin HEAD
+          fi
+
+      - name: 📸 Upload Screenshots & Logs as Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upload-logs-and-screenshots
+          path: logs/
+          retention-days: 7
