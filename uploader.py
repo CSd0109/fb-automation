@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 """
-Facebook Reels Auto Uploader (Personal Profile ID)
-==================================================
-Runs on GitHub Actions (or locally) at Nepali Times:
-- 7:00 AM NPT
-- 1:00 PM NPT
-- 4:00 PM NPT
-- 7:00 PM NPT
-
-Automates posting Reels to personal Facebook profile using Playwright & Session State.
+Facebook Reels 24/7 Ultra-Deep AI Auto Uploader
+================================================
+Features:
+1. Ultra-Deep Video Analysis with Gemini 3.6 Flash:
+   - Auto-detects spoken language and visual theme
+   - Generates viral Title, Hooks, SEO Description
+   - Generates 8-12 trending, high-ranking hashtags
+   - Generates custom prompt for 9:16 AI Thumbnail
+2. Flow/Flux AI Thumbnail Generator:
+   - Generates photorealistic vertical 9:16 cover thumbnail
+   - Uploads/applies custom thumbnail to Reel
+3. Uploads to Personal Facebook ID at scheduled Nepali Times:
+   - 7:00 AM, 1:00 PM, 4:00 PM, 7:00 PM NPT
+4. Auto-Delete Video on Success:
+   - Automatically removes the uploaded video from videos/ folder to keep disk clean!
 """
 
 import os
@@ -16,6 +22,8 @@ import sys
 import json
 import time
 import glob
+import re
+import urllib.parse
 from datetime import datetime, timezone, timedelta
 import requests
 from dotenv import load_dotenv
@@ -23,7 +31,7 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 
 load_dotenv()
 
-# Constants & Paths
+# Directories & Files
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIDEOS_DIR = os.path.join(BASE_DIR, "videos")
 LOGS_DIR = os.path.join(BASE_DIR, "logs")
@@ -38,8 +46,7 @@ os.makedirs(LOGS_DIR, exist_ok=True)
 NEPAL_TZ = timezone(timedelta(hours=5, minutes=45))
 
 def get_nepal_time_str():
-    now_npt = datetime.now(NEPAL_TZ)
-    return now_npt.strftime("%Y-%m-%d %I:%M:%S %p NPT")
+    return datetime.now(NEPAL_TZ).strftime("%Y-%m-%d %I:%M:%S %p NPT")
 
 def log(msg):
     print(f"[{get_nepal_time_str()}] {msg}", flush=True)
@@ -52,7 +59,6 @@ def send_telegram_notification(message):
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
             data = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
             requests.post(url, json=data, timeout=10)
-            log("📱 Telegram notification sent successfully.")
         except Exception as e:
             log(f"⚠️ Telegram notification error: {e}")
 
@@ -71,100 +77,138 @@ def save_posted_history(history):
 
 def get_next_video():
     """
-    Finds the next unposted video from queue.json or videos/ folder.
+    Finds the first available unposted video in videos/ folder or queue.json.
     """
-    history = load_posted_history()
-    posted_filenames = {item.get("filename") for item in history if item.get("status") == "success"}
-
-    # 1. Check queue.json if present
-    if os.path.exists(QUEUE_FILE):
-        try:
-            with open(QUEUE_FILE, "r", encoding="utf-8") as f:
-                queue = json.load(f)
-                for item in queue:
-                    fname = item.get("filename")
-                    full_path = os.path.join(VIDEOS_DIR, fname)
-                    if fname and fname not in posted_filenames and os.path.exists(full_path):
-                        return {
-                            "filename": fname,
-                            "filepath": full_path,
-                            "caption": item.get("caption", ""),
-                            "source": "queue.json"
-                        }
-        except Exception as e:
-            log(f"⚠️ Error reading queue.json: {e}")
-
-    # 2. Fallback to scanning videos/ directory
     supported_extensions = ("*.mp4", "*.mov", "*.webm", "*.mkv")
     video_files = []
     for ext in supported_extensions:
         video_files.extend(glob.glob(os.path.join(VIDEOS_DIR, ext)))
     
-    video_files.sort() # alphabetical / FIFO order
+    video_files.sort() # FIFO order
 
-    for vpath in video_files:
-        vname = os.path.basename(vpath)
-        if vname not in posted_filenames:
-            return {
-                "filename": vname,
-                "filepath": vpath,
-                "caption": "",
-                "source": "videos_dir"
-            }
+    if not video_files:
+        return None
 
-    return None
+    # Pick first available video
+    target_path = video_files[0]
+    target_name = os.path.basename(target_path)
 
-def generate_ai_caption(video_path, video_filename):
+    # Check if custom metadata exists in queue.json
+    custom_caption = ""
+    if os.path.exists(QUEUE_FILE):
+        try:
+            with open(QUEUE_FILE, "r", encoding="utf-8") as f:
+                queue = json.load(f)
+                for item in queue:
+                    if item.get("filename") == target_name:
+                        custom_caption = item.get("caption", "")
+                        break
+        except Exception:
+            pass
+
+    return {
+        "filename": target_name,
+        "filepath": target_path,
+        "custom_caption": custom_caption
+    }
+
+def perform_ultra_deep_video_analysis(video_path, video_filename):
     """
-    Generates SEO viral caption with hashtags using Gemini API if available.
+    Ultra-deep video analysis using Gemini 3.6 Flash.
+    Returns language, title, description, hashtags, and thumbnail_prompt.
     """
     gemini_key = os.getenv("GEMINI_API_KEY")
     if not gemini_key:
-        log("ℹ️ No GEMINI_API_KEY found, using standard viral Nepali & English caption.")
-        return f"✨ Watch till the end! 🔥\n\n#reels #fyp #nepal #trending #viral #fbreels #{video_filename.split('.')[0]}"
+        log("ℹ️ No GEMINI_API_KEY found, using default viral template.")
+        return {
+            "language": "Nepali/English",
+            "title": "Amazing Viral Reel! 🔥",
+            "description": "Watch till the end! Like, Comment & Share 🚀",
+            "hashtags": ["#fyp", "#reels", "#nepal", "#trending", "#viral"],
+            "thumbnail_prompt": f"Vertical 9:16 vibrant cinematic action shot for video {video_filename}, high contrast, 8k resolution, photorealistic."
+        }
 
     try:
         from google import genai
-        log("🤖 Gemini AI is generating viral SEO caption for Reel...")
+        log(f"🧠 Gemini 3.6 Flash analyzing video deeply: '{video_filename}'...")
         client = genai.Client(api_key=gemini_key)
-        
-        # Upload video to Gemini for multimodal analysis if small enough (<50MB)
-        file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
-        if file_size_mb < 50:
-            try:
-                sample_file = client.files.upload(file=video_path)
-                response = client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=[
-                        sample_file,
-                        "Analyze this short video and write an ultra-engaging, viral Facebook Reel caption in Nepali and English with attractive emojis and high-ranking hashtags (like #fyp #reels #nepal #trending). Keep it under 50 words."
-                    ]
-                )
-                caption = response.text.strip()
-                log(f"✨ AI Generated Caption:\n{caption}")
-                return caption
-            except Exception as ex:
-                log(f"⚠️ Gemini video upload failed, falling back to text prompt: {ex}")
 
-        # Text prompt fallback
+        file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
+        file_ref = None
+
+        if file_size_mb < 80:
+            try:
+                log("📤 Uploading video to Gemini Vision Engine...")
+                file_ref = client.files.upload(file=video_path)
+                while file_ref.state.name == "PROCESSING":
+                    time.sleep(2)
+                    file_ref = client.files.get(name=file_ref.name)
+                log(f"✅ Video processed in Gemini Vision (State: {file_ref.state.name})")
+            except Exception as up_ex:
+                log(f"⚠️ Video direct upload note: {up_ex}")
+
+        analysis_prompt = """
+Perform an ultra-deep, comprehensive analysis of this video and return a JSON object with:
+1. "language": Spoken or detected language (e.g. "Nepali", "English", "Hindi", "Instrumental Music").
+2. "title": Catchy, high-CTR viral hook/title with attractive emojis.
+3. "description": Ultra-engaging Facebook Reel description in the video's language that hooks viewers and maximizes watch time.
+4. "hashtags": An array of 8-12 high-traffic, relevant, trending hashtags (e.g. ["#StudyAbroad", "#NepalToUSA", "#fyp", "#reels", "#viral"]).
+5. "thumbnail_prompt": Detailed, photorealistic prompt for generating a stunning vertical 9:16 thumbnail image that captures the essence of this video.
+
+Respond ONLY with valid JSON.
+"""
+        contents = [file_ref, analysis_prompt] if file_ref else [analysis_prompt + f"\nVideo filename: {video_filename}"]
+        
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=[
-                f"Write an ultra-engaging, viral Facebook Reel caption for a video named '{video_filename}'. Include Nepali/English catchy hook, emojis, and viral hashtags (like #fyp #reels #nepal #trending). Keep it under 50 words."
-            ]
+            model='gemini-3.6-flash',
+            contents=contents
         )
-        caption = response.text.strip()
-        log(f"✨ AI Generated Caption:\n{caption}")
-        return caption
+
+        raw_text = response.text.strip()
+        # Clean json markdown wrapper if present
+        clean_json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+        if clean_json_match:
+            data = json.loads(clean_json_match.group(0))
+            log(f"🎯 Analysis Completed:\n - Language: {data.get('language')}\n - Title: {data.get('title')}")
+            return data
+        else:
+            return json.loads(raw_text)
 
     except Exception as e:
-        log(f"⚠️ Gemini caption generation failed: {e}")
-        return f"✨ Amazing Reel! Like, Comment & Share 🔥\n\n#reels #nepal #trending #fyp #viral"
+        log(f"⚠️ Gemini deep analysis fallback: {e}")
+        return {
+            "language": "Nepali/English",
+            "title": "Incredible Reel! 🚀",
+            "description": "Watch till the end and follow for more exciting content! 🔥",
+            "hashtags": ["#fyp", "#reels", "#nepal", "#trending", "#viral"],
+            "thumbnail_prompt": f"Vertical 9:16 high quality movie poster thumbnail for {video_filename}, photorealistic, dramatic lighting, 8k."
+        }
+
+def generate_ai_thumbnail(thumbnail_prompt, video_filename):
+    """
+    Generates a custom vertical 9:16 thumbnail image using Flux / Pollinations AI.
+    """
+    try:
+        log("🎨 Generating custom 9:16 AI Thumbnail from prompt...")
+        base_prompt = thumbnail_prompt + ", 9:16 aspect ratio, ultra-detailed, photorealistic, cinematic lighting, 8k"
+        encoded = urllib.parse.quote(base_prompt)
+        img_url = f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1920&model=flux&nologo=true"
+
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(img_url, headers=headers, timeout=60)
+        if resp.status_code == 200 and len(resp.content) > 1000:
+            thumb_path = os.path.join(LOGS_DIR, f"thumb_{os.path.splitext(video_filename)[0]}.jpg")
+            with open(thumb_path, "wb") as f:
+                f.write(resp.content)
+            log(f"🖼️ AI Thumbnail generated and saved: {thumb_path}")
+            return thumb_path
+        else:
+            log(f"⚠️ Thumbnail fetch returned status {resp.status_code}")
+    except Exception as e:
+        log(f"⚠️ Thumbnail generation failed: {e}")
+    return None
 
 def prepare_storage_state():
-    """
-    Ensures facebook_session.json exists, pulling from FB_STORAGE_STATE secret if available.
-    """
     env_state = os.getenv("FB_STORAGE_STATE")
     if env_state and env_state.strip():
         try:
@@ -180,23 +224,38 @@ def prepare_storage_state():
         log(f"✅ Using local session file: {SESSION_FILE}")
         return True
 
-    log("❌ ERROR: No Facebook session found! Please run 'save_session.py' locally or add 'FB_STORAGE_STATE' to GitHub Secrets.")
+    log("❌ ERROR: No Facebook session found! Run 'save_session.py' or provide FB_STORAGE_STATE.")
     return False
 
 def upload_reel(video_info):
     """
-    Automates uploading a single video to Facebook Reels on Personal ID using Playwright.
+    Executes full upload flow to Personal Facebook Profile ID with custom thumbnail & SEO caption.
     """
     video_path = video_info["filepath"]
     video_filename = video_info["filename"]
-    caption = video_info["caption"] or generate_ai_caption(video_path, video_filename)
 
-    log(f"🎬 Starting upload for video: {video_filename} ({os.path.getsize(video_path) / (1024*1024):.2f} MB)")
+    # 1. Ultra-Deep AI Video Analysis
+    analysis = perform_ultra_deep_video_analysis(video_path, video_filename)
 
+    # Format caption
+    if video_info.get("custom_caption"):
+        final_caption = video_info["custom_caption"]
+    else:
+        title = analysis.get("title", "")
+        desc = analysis.get("description", "")
+        tags = " ".join(analysis.get("hashtags", ["#fyp", "#reels", "#nepal"]))
+        final_caption = f"{title}\n\n{desc}\n\n{tags}"
+
+    log(f"✨ Final Caption to be posted:\n{final_caption}\n")
+
+    # 2. Generate AI Thumbnail
+    thumbnail_prompt = analysis.get("thumbnail_prompt", "")
+    thumbnail_path = generate_ai_thumbnail(thumbnail_prompt, video_filename) if thumbnail_prompt else None
+
+    # 3. Launch Headless Browser & Automate Facebook Reels Creator
     is_headless = os.getenv("HEADLESS", "true").lower() != "false"
 
     with sync_playwright() as p:
-        # Launch Chromium with stealth evasion flags
         browser = p.chromium.launch(
             headless=is_headless,
             args=[
@@ -204,8 +263,6 @@ def upload_reel(video_info):
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
-                "--disable-accelerated-2d-canvas",
-                "--disable-gpu",
                 "--window-size=1920,1080"
             ]
         )
@@ -221,92 +278,79 @@ def upload_reel(video_info):
         page = context.new_page()
         page.set_default_timeout(60000)
 
-        # Apply stealth script
-        page.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined
-            });
-        """)
+        # Stealth evasions
+        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
 
-        log("🌐 Navigating to Facebook Reels Creation Page (https://www.facebook.com/reels/create)...")
+        log("🌐 Navigating to Facebook Reels Creator (https://www.facebook.com/reels/create)...")
         page.goto("https://www.facebook.com/reels/create", wait_until="domcontentloaded")
         page.wait_for_timeout(5000)
 
-        # Check if redirected to login
-        current_url = page.url
-        if "login" in current_url or "checkpoint" in current_url:
-            screenshot_path = os.path.join(LOGS_DIR, f"login_required_{int(time.time())}.png")
-            page.screenshot(path=screenshot_path)
-            error_msg = "❌ Facebook Session Expired! Please re-run save_session.py and update FB_STORAGE_STATE in GitHub Secrets."
+        # Verify login
+        if "login" in page.url or "checkpoint" in page.url:
+            screenshot_err = os.path.join(LOGS_DIR, f"session_expired_{int(time.time())}.png")
+            page.screenshot(path=screenshot_err)
+            error_msg = "❌ Facebook Session Expired! Please re-login using save_session.py"
             log(error_msg)
-            send_telegram_notification(f"🚨 <b>Facebook Reel Upload Failed!</b>\n\n{error_msg}")
             browser.close()
-            return False, error_msg
+            return False, error_msg, None
 
-        log("📤 Locating file upload input...")
-        # Locate input[type="file"]
-        file_input_selector = 'input[type="file"]'
+        # Upload Video File
+        log("📤 Attaching video file...")
         try:
-            page.wait_for_selector(file_input_selector, state="attached", timeout=20000)
-            file_input = page.locator(file_input_selector).first
-            file_input.set_input_files(video_path)
-            log("✅ Video file attached to upload input!")
+            page.wait_for_selector('input[type="file"]', state="attached", timeout=25000)
+            page.locator('input[type="file"]').first.set_input_files(video_path)
+            log("✅ Video attached successfully!")
         except Exception as ex:
-            log(f"⚠️ Standard file input wait failed: {ex}. Attempting direct file chooser...")
-            # Try file chooser trigger if needed
+            log(f"⚠️ Standard input failed ({ex}), trying file chooser...")
+            with page.expect_file_chooser(timeout=10000) as fc_info:
+                page.locator('div[role="button"]:has-text("Add Video"), [aria-label*="Add video"]').first.click()
+            fc_info.value.set_files(video_path)
+            log("✅ Video attached via chooser!")
+
+        # Wait for video processing
+        log("⏳ Waiting for video preview processing (10s)...")
+        page.wait_for_timeout(10000)
+
+        # Check for Thumbnail / Cover Photo Upload button if available
+        if thumbnail_path and os.path.exists(thumbnail_path):
             try:
-                with page.expect_file_chooser(timeout=10000) as fc_info:
-                    page.locator('div[role="button"]:has-text("Add Video"), div[role="button"]:has-text("भिडियो थप्नुहोस्"), [aria-label*="Add video"]').first.click()
-                file_chooser = fc_info.value
-                file_chooser.set_files(video_path)
-                log("✅ Video file attached via file chooser!")
-            except Exception as fc_ex:
-                log(f"❌ Failed to attach video: {fc_ex}")
-                page.screenshot(path=os.path.join(LOGS_DIR, f"upload_error_{int(time.time())}.png"))
-                browser.close()
-                return False, f"Failed to attach video: {fc_ex}"
+                cover_tab = page.locator('div[role="tab"]:has-text("Cover photo"), div[role="button"]:has-text("Cover photo"), div[role="button"]:has-text("Thumbnail")').first
+                if cover_tab.is_visible(timeout=3000):
+                    cover_tab.click()
+                    page.wait_for_timeout(2000)
+                    upload_cover_btn = page.locator('input[type="file"][accept*="image"]').first
+                    if upload_cover_btn.is_attached():
+                        upload_cover_btn.set_input_files(thumbnail_path)
+                        log("🖼️ Custom AI Thumbnail attached to Reel cover!")
+            except Exception as th_ex:
+                log(f"ℹ️ Custom cover upload tab note: {th_ex}")
 
-        # Wait for Facebook to process video preview
-        log("⏳ Waiting for video preview & processing...")
-        page.wait_for_timeout(8000)
-
-        # Step 1: Click "Next" / "अर्को" button
-        next_button_selectors = [
-            'div[aria-label="Next"]',
-            'div[aria-label="अर्को"]',
-            'div[role="button"]:has-text("Next")',
-            'div[role="button"]:has-text("अर्को")',
-            'button:has-text("Next")',
-            'button:has-text("अर्को")'
+        # Step 1: Click "Next" / "अर्को"
+        next_selectors = [
+            'div[aria-label="Next"]', 'div[aria-label="अर्को"]',
+            'div[role="button"]:has-text("Next")', 'div[role="button"]:has-text("अर्को")',
+            'button:has-text("Next")', 'button:has-text("अर्को")'
         ]
 
-        def click_next_if_visible():
-            for selector in next_button_selectors:
+        def click_next():
+            for sel in next_selectors:
                 try:
-                    loc = page.locator(selector).first
+                    loc = page.locator(sel).first
                     if loc.is_visible(timeout=3000):
                         loc.click()
-                        log(f"➡️ Clicked 'Next' button ({selector})")
+                        log(f"➡️ Clicked Next ({sel})")
                         page.wait_for_timeout(3000)
                         return True
                 except Exception:
                     continue
             return False
 
-        # Click Next (from Upload Step to Audio/Trim Step)
-        if not click_next_if_visible():
-            log("⚠️ 'Next' button not immediately found, waiting 5 more seconds for video processing...")
-            page.wait_for_timeout(5000)
-            click_next_if_visible()
-
-        # Step 2: Audio/Trim to Details (If another "Next" exists)
-        page.wait_for_timeout(3000)
-        click_next_if_visible()
-
-        # Step 3: Enter Caption / Description
-        log("✍️ Entering Reel caption...")
+        click_next()
         page.wait_for_timeout(2000)
-        
+        click_next() # If audio/trim step exists
+
+        # Step 2: Fill Caption / Description
+        log("✍️ Typing AI SEO Caption & Viral Hashtags...")
         caption_selectors = [
             'div[aria-label*="Describe your reel"]',
             'div[aria-label*="आफ्नो रिल"]',
@@ -316,106 +360,116 @@ def upload_reel(video_info):
             'textarea'
         ]
 
-        caption_entered = False
+        caption_filled = False
         for c_sel in caption_selectors:
             try:
                 loc = page.locator(c_sel).first
                 if loc.is_visible(timeout=3000):
                     loc.click()
                     page.wait_for_timeout(500)
-                    # Type caption smoothly
-                    page.keyboard.type(caption, delay=15)
-                    log(f"✅ Caption filled into ({c_sel})")
-                    caption_entered = True
+                    page.keyboard.type(final_caption, delay=15)
+                    caption_filled = True
+                    log(f"✅ Caption entered into ({c_sel})")
                     break
             except Exception:
                 continue
 
-        if not caption_entered:
-            log("⚠️ Could not find description textbox selector, attempting direct keyboard typing...")
+        if not caption_filled:
             try:
                 page.keyboard.press("Tab")
-                page.keyboard.type(caption, delay=15)
-            except Exception as ex:
-                log(f"⚠️ Fallback caption typing error: {ex}")
+                page.keyboard.type(final_caption, delay=15)
+            except Exception as e:
+                log(f"⚠️ Caption typing error: {e}")
 
         page.wait_for_timeout(3000)
 
-        # Step 4: Click "Publish" / "पोस्ट" / "प्रकाशित गर्नुहोस्"
+        # Step 3: Click "Publish" / "प्रकाशित गर्नुहोस्"
         log("🚀 Clicking 'Publish' button...")
         publish_selectors = [
-            'div[aria-label="Publish"]',
-            'div[aria-label="प्रकाशित गर्नुहोस्"]',
+            'div[aria-label="Publish"]', 'div[aria-label="प्रकाशित गर्नुहोस्"]',
             'div[aria-label="Post"]',
-            'div[role="button"]:has-text("Publish")',
-            'div[role="button"]:has-text("प्रकाशित गर्नुहोस्")',
+            'div[role="button"]:has-text("Publish")', 'div[role="button"]:has-text("प्रकाशित गर्नुहोस्")',
             'div[role="button"]:has-text("Post")',
-            'div[role="button"]:has-text("पोस्ट गर्नुहोस्")',
-            'button:has-text("Publish")',
-            'button:has-text("Post")'
+            'button:has-text("Publish")', 'button:has-text("Post")'
         ]
 
-        published_clicked = False
+        published = False
         for p_sel in publish_selectors:
             try:
                 loc = page.locator(p_sel).first
                 if loc.is_visible(timeout=4000):
                     loc.click()
                     log(f"🎉 Clicked Publish button ({p_sel})!")
-                    published_clicked = True
+                    published = True
                     break
             except Exception:
                 continue
 
-        if not published_clicked:
-            # Look for any button with Publish text
-            log("⚠️ Searching for fallback publish elements...")
+        if not published:
             try:
                 page.get_by_role("button", name="Publish").click(timeout=5000)
-                published_clicked = True
+                published = True
                 log("🎉 Clicked Publish via get_by_role!")
             except Exception as e:
-                log(f"❌ Could not click publish button: {e}")
-                screenshot_err = os.path.join(LOGS_DIR, f"publish_button_missing_{int(time.time())}.png")
-                page.screenshot(path=screenshot_err)
+                log(f"❌ Failed to click publish button: {e}")
                 browser.close()
-                return False, f"Could not find publish button: {e}"
+                return False, f"Publish button not clickable: {e}", None
 
-        # Wait for video upload to finalize
-        log("⏳ Waiting for Reel upload & publishing confirmation...")
-        page.wait_for_timeout(20000) # Give Facebook 20s to complete upload
+        # Wait for completion
+        log("⏳ Uploading Reel to Facebook servers (20s)...")
+        page.wait_for_timeout(20000)
 
-        # Save success screenshot
-        success_screenshot = os.path.join(LOGS_DIR, f"published_{video_filename}_{int(time.time())}.png")
-        page.screenshot(path=success_screenshot)
-        log(f"📸 Saved screenshot: {success_screenshot}")
+        # Screenshot success
+        success_img = os.path.join(LOGS_DIR, f"success_{video_filename}_{int(time.time())}.png")
+        page.screenshot(path=success_img)
+        log(f"📸 Screenshot saved: {success_img}")
 
         browser.close()
-        return True, "Reel published successfully!"
+        return True, "Reel uploaded successfully!", final_caption
+
+def auto_delete_video(video_path, video_filename):
+    """
+    Deletes the uploaded video from disk and updates queue.json.
+    """
+    try:
+        if os.path.exists(video_path):
+            os.remove(video_path)
+            log(f"🗑️ Successfully deleted uploaded video: {video_path}")
+
+        # Remove from queue.json if present
+        if os.path.exists(QUEUE_FILE):
+            try:
+                with open(QUEUE_FILE, "r", encoding="utf-8") as f:
+                    queue = json.load(f)
+                new_queue = [item for item in queue if item.get("filename") != video_filename]
+                with open(QUEUE_FILE, "w", encoding="utf-8") as f:
+                    json.dump(new_queue, f, indent=2, ensure_ascii=False)
+                log(f"📋 Removed '{video_filename}' from queue.json")
+            except Exception as q_ex:
+                log(f"⚠️ Failed to update queue.json: {q_ex}")
+
+    except Exception as e:
+        log(f"⚠️ Failed to delete video {video_path}: {e}")
 
 def main():
-    log("=" * 60)
-    log("🔥 Facebook Reels Auto Uploader Starting...")
+    log("=" * 65)
+    log("🔥 Facebook Reels Ultra-Deep AI Auto Uploader Starting...")
     log(f"⏰ Current Nepal Time: {get_nepal_time_str()}")
-    log("=" * 60)
+    log("=" * 65)
 
-    # 1. Verify Facebook session
     if not prepare_storage_state():
         sys.exit(1)
 
-    # 2. Get next video to upload
     video_info = get_next_video()
     if not video_info:
-        log("✨ No pending videos found to upload! Everything is up-to-date.")
-        log("💡 To upload new reels, simply place your .mp4 files into the 'videos/' folder.")
+        log("✨ No pending videos found in 'videos/' folder!")
+        log("💡 Simply copy your new .mp4 video files into 'videos/' folder.")
         sys.exit(0)
 
-    log(f"🎯 Target video selected: {video_info['filename']}")
+    log(f"🎯 Target video selected for upload: {video_info['filename']}")
 
-    # 3. Perform upload
-    success, message = upload_reel(video_info)
+    success, message, caption_used = upload_reel(video_info)
 
-    # 4. Record history
     history = load_posted_history()
     now_utc = datetime.now(timezone.utc).isoformat()
     now_npt = get_nepal_time_str()
@@ -425,13 +479,16 @@ def main():
         "posted_at_npt": now_npt,
         "posted_at_utc": now_utc,
         "status": "success" if success else "failed",
-        "caption": video_info.get("caption", ""),
+        "caption": caption_used or "",
         "message": message
     })
     save_posted_history(history)
 
     if success:
-        success_msg = f"✅ <b>Facebook Reel Uploaded Successfully!</b>\n\n🎬 <b>Video:</b> {video_info['filename']}\n⏰ <b>Time:</b> {now_npt}"
+        # Auto-delete video upon success!
+        auto_delete_video(video_info["filepath"], video_info["filename"])
+
+        success_msg = f"✅ <b>Facebook Reel Uploaded & Auto-Cleaned!</b>\n\n🎬 <b>Video:</b> {video_info['filename']}\n⏰ <b>Time:</b> {now_npt}"
         log(f"🎉 {success_msg}")
         send_telegram_notification(success_msg)
         sys.exit(0)
