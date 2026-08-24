@@ -14,5 +14,13 @@
     "status": "success",
     "caption": "✨ Next level animation & visual design! 💫 #fyp #trending #reels #viralvideo",
     "message": "Reel uploaded successfully!"
+  },
+  {
+    "filename": "video9.mp4",
+    "posted_at_npt": "2026-08-24 11:25:53 PM NPT",
+    "posted_at_utc": "2026-08-24T17:40:53.210550+00:00",
+    "status": "failed",
+    "caption": "",
+    "message": "Publish button not clickable: Locator.click: Timeout 5000ms exceeded.\nCall log:\n  - waiting for get_by_role(\"button\", name=\"Publish\")\n"
   }
 ]
