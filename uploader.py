@@ -166,10 +166,24 @@ Respond ONLY with valid JSON.
 """
         contents = [file_ref, analysis_prompt] if file_ref else [analysis_prompt + f"\nVideo filename: {video_filename}"]
         
-        response = client.models.generate_content(
-            model='gemini-3.6-flash',
-            contents=contents
-        )
+        models_to_try = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-3-flash-preview']
+        response = None
+        for m in models_to_try:
+            try:
+                log(f"Trying Gemini model '{m}'...")
+                response = client.models.generate_content(
+                    model=m,
+                    contents=contents
+                )
+                if response and response.text:
+                    log(f"✅ Success with Gemini model '{m}'")
+                    break
+            except Exception as mex:
+                log(f"⚠️ Model '{m}' note: {mex}")
+                continue
+
+        if not response or not response.text:
+            raise RuntimeError("All Gemini models reached quota or failed")
 
         raw_text = response.text.strip()
         # Clean json markdown wrapper if present
