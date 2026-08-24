@@ -42,6 +42,8 @@ jobs:
       - name: 🚀 Run Facebook Reels Auto Uploader
         env:
           FB_STORAGE_STATE: ${{ secrets.FB_STORAGE_STATE }}
+          FB_COOKIE: ${{ secrets.FB_COOKIE }}
+          FB_PAGE_TOKEN: ${{ secrets.FB_PAGE_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

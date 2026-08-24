@@ -217,17 +217,51 @@ def generate_ai_thumbnail(thumbnail_prompt, video_filename):
     thumb_name = f"thumb_{os.path.splitext(video_filename)[0]}.jpg"
     return generate_vertical_thumbnail(thumbnail_prompt, thumb_name, LOGS_DIR)
 
+def parse_cookie_string_to_storage(cookie_str):
+    cookies = []
+    for item in cookie_str.split(";"):
+        if "=" in item:
+            k, v = item.strip().split("=", 1)
+            k = k.strip()
+            v = v.strip()
+            if k and v:
+                cookies.append({
+                    "name": k,
+                    "value": v,
+                    "domain": ".facebook.com",
+                    "path": "/",
+                    "expires": 1819062569,
+                    "httpOnly": k in ["xs", "fr", "sb", "datr", "ps_l", "ps_n"],
+                    "secure": True,
+                    "sameSite": "Lax"
+                })
+    return {"cookies": cookies, "origins": []}
+
 def prepare_storage_state():
-    env_state = os.getenv("FB_STORAGE_STATE")
-    if env_state and env_state.strip():
-        try:
-            state_data = json.loads(env_state.strip())
-            with open(SESSION_FILE, "w", encoding="utf-8") as f:
-                json.dump(state_data, f)
-            log("✅ Loaded session state from FB_STORAGE_STATE secret.")
-            return True
-        except Exception as e:
-            log(f"⚠️ Failed to parse FB_STORAGE_STATE secret JSON: {e}")
+    # Check all possible secret names
+    for env_var in ["FB_STORAGE_STATE", "FB_COOKIE", "FB_COOKIES", "FB_PAGE_TOKEN"]:
+        raw_val = os.getenv(env_var, "").strip()
+        if raw_val:
+            # 1. Try parsing as JSON
+            try:
+                state_data = json.loads(raw_val)
+                with open(SESSION_FILE, "w", encoding="utf-8") as f:
+                    json.dump(state_data, f, indent=2)
+                log(f"✅ Loaded JSON session state from {env_var} secret.")
+                return True
+            except Exception:
+                pass
+
+            # 2. Try parsing as cookie string (datr=...; c_user=...;)
+            if "c_user=" in raw_val or "xs=" in raw_val or "datr=" in raw_val:
+                try:
+                    storage_data = parse_cookie_string_to_storage(raw_val)
+                    with open(SESSION_FILE, "w", encoding="utf-8") as f:
+                        json.dump(storage_data, f, indent=2)
+                    log(f"✅ Parsed raw cookie string from {env_var} secret ({len(storage_data['cookies'])} cookies).")
+                    return True
+                except Exception as ex:
+                    log(f"⚠️ Failed to parse cookie string from {env_var}: {ex}")
 
     if os.path.exists(SESSION_FILE):
         log(f"✅ Using local session file: {SESSION_FILE}")
