@@ -191,29 +191,17 @@ Respond ONLY with valid JSON.
             "thumbnail_prompt": f"Vertical 9:16 high quality movie poster thumbnail for {video_filename}, photorealistic, dramatic lighting, 8k."
         }
 
+from thumbnail_generator import generate_vertical_thumbnail
+
 def generate_ai_thumbnail(thumbnail_prompt, video_filename):
     """
-    Generates a custom vertical 9:16 thumbnail image using Flux / Pollinations AI.
+    Generates a custom vertical 9:16 thumbnail image using Flux / Flow AI.
     """
-    try:
-        log("🎨 Generating custom 9:16 AI Thumbnail from prompt...")
-        base_prompt = thumbnail_prompt + ", 9:16 aspect ratio, ultra-detailed, photorealistic, cinematic lighting, 8k"
-        encoded = urllib.parse.quote(base_prompt)
-        img_url = f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1920&model=flux&nologo=true"
-
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(img_url, headers=headers, timeout=60)
-        if resp.status_code == 200 and len(resp.content) > 1000:
-            thumb_path = os.path.join(LOGS_DIR, f"thumb_{os.path.splitext(video_filename)[0]}.jpg")
-            with open(thumb_path, "wb") as f:
-                f.write(resp.content)
-            log(f"🖼️ AI Thumbnail generated and saved: {thumb_path}")
-            return thumb_path
-        else:
-            log(f"⚠️ Thumbnail fetch returned status {resp.status_code}")
-    except Exception as e:
-        log(f"⚠️ Thumbnail generation failed: {e}")
-    return None
+    if not thumbnail_prompt:
+        thumbnail_prompt = f"Cinematic viral Facebook Reel thumbnail for video {video_filename}"
+    
+    thumb_name = f"thumb_{os.path.splitext(video_filename)[0]}.jpg"
+    return generate_vertical_thumbnail(thumbnail_prompt, thumb_name, LOGS_DIR)
 
 def prepare_storage_state():
     env_state = os.getenv("FB_STORAGE_STATE")
