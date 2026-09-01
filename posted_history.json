@@ -198,5 +198,13 @@
     "status": "failed",
     "caption": "",
     "message": "❌ Facebook Session Expired! Please re-login using save_session.py"
+  },
+  {
+    "filename": "video9.mp4",
+    "posted_at_npt": "2026-09-01 11:06:17 PM NPT",
+    "posted_at_utc": "2026-09-01T17:21:17.124951+00:00",
+    "status": "failed",
+    "caption": "",
+    "message": "❌ Facebook Session Expired! Please re-login using save_session.py"
   }
 ]
